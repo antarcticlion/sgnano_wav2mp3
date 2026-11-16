@@ -5,6 +5,9 @@
 #   wav2mp3.sgx がリンクするほか、sgnano 本体のファームウェアからも同じ libmp3lame.a を使える。
 #
 # `config.h` は sgnano が書いたもの（configure は走らせない）。公開するヘッダは include/lame.h だけ。
+include(GNUInstallDirs)
+set(MP3LAME_VERSION "3.100")
+
 file(GLOB LAME_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/libmp3lame/*.c")
 
 add_library(mp3lame STATIC ${LAME_SOURCES})
@@ -49,7 +52,7 @@ configure_package_config_file(
     INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/mp3lame")
 write_basic_package_version_file(
     "${CMAKE_CURRENT_BINARY_DIR}/mp3lameConfigVersion.cmake"
-    VERSION "${PROJECT_VERSION}"
+    VERSION "${MP3LAME_VERSION}"
     COMPATIBILITY SameMajorVersion)
 install(FILES
         "${CMAKE_CURRENT_BINARY_DIR}/mp3lameConfig.cmake"
