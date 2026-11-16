@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: LGPL-2.0-or-later
 """wav2mp3（apps/wav2mp3 の w2m.c + LAME 3.100）のホスト試験（2026-11-14）。
 
 - 速さ（32k / 44.1k / 48k と 2 倍・4 倍）・チャンネル・ビット数（8 / 16 / 24 / 32 / float）・長さを変えた WAV を作って変換する。
