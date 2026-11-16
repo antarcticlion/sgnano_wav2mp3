@@ -1,0 +1,110 @@
+name: build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  host:
+    name: Host tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        run: cmake --preset host
+
+      - name: Build
+        run: cmake --build --preset host -j"$(nproc)"
+
+      - name: Test
+        run: ctest --preset host --output-on-failure
+
+      - name: Upload host tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: host-tools
+          path: |
+            build/host/w2mhost
+            build/host/mp3dec
+            build/host/third_party/lame/libmp3lame.a
+          if-no-files-found: error
+
+  sgx:
+    name: SGX build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+
+      - name: Show the toolchain
+        run: arm-none-eabi-gcc --version | head -1
+
+      - name: Configure
+        run: cmake --preset sgx
+
+      - name: Build
+        run: cmake --build --preset sgx -j"$(nproc)"
+
+      - name: Check the SGX image and the LAME library
+        run: |
+          test -s build/sgx/sgx/wav2mp3.sgx
+          test -s build/sgx/third_party/lame/libmp3lame.a
+          arm-none-eabi-size build/sgx/sgx/wav2mp3.elf
+          arm-none-eabi-nm --defined-only build/sgx/third_party/lame/libmp3lame.a | grep -q "T lame_init"
+
+      - name: Stage release files
+        run: |
+          mkdir -p dist
+          cp build/sgx/sgx/wav2mp3.sgx dist/
+          cp build/sgx/third_party/lame/libmp3lame.a dist/
+          cp third_party/lame/include/lame.h dist/
+          cp README.md LICENSE NOTICE RELEASE_NOTES.md dist/
+          for f in LICENSES/*; do cp "$f" "dist/LICENSES-$(basename "$f")"; done
+          ( cd dist && find . -type f ! -name SHA256SUMS -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS )
+          ls -l dist
+
+      - name: Upload the SGX release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: sgx-release
+          path: dist/
+          if-no-files-found: error
+
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [host, sgx]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download the release files
+        uses: actions/download-artifact@v4
+        with:
+          name: sgx-release
+          path: dist
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          gh release create "$tag" dist/* \
+            --title "sgnano_wav2mp3 $tag" \
+            --notes-file RELEASE_NOTES.md

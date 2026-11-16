@@ -1,0 +1,24 @@
+# ビルドの生成物
+/build/
+/build-*/
+/out/
+/dist/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+.ninja_deps
+.ninja_log
+
+# エディタ・OS
+.DS_Store
+*.swp
+*~
+
+# Python
+__pycache__/
+*.pyc
+
+# 試験の途中の出力
+*.mp3
+*.raw

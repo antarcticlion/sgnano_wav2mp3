@@ -1,0 +1,52 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "host",
+      "displayName": "Host build (w2mhost / mp3dec / tests)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/host",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "WAV2MP3_BUILD_HOST": "ON",
+        "WAV2MP3_BUILD_SGX": "OFF"
+      }
+    },
+    {
+      "name": "sgx",
+      "displayName": "SGX build (wav2mp3.sgx / libmp3lame.a)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/sgx",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "WAV2MP3_BUILD_HOST": "OFF",
+        "WAV2MP3_BUILD_SGX": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "host",
+      "configurePreset": "host"
+    },
+    {
+      "name": "sgx",
+      "configurePreset": "sgx"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "host",
+      "configurePreset": "host",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

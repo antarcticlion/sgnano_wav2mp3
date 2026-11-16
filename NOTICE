@@ -1,0 +1,33 @@
+sgnano_wav2mp3
+Copyright (c) 2026 antarcticlion
+
+This distribution contains:
+
+  LAME 3.100 (libmp3lame)
+    LGPL-2.0-or-later
+    https://lame.sourceforge.io/
+    Copyright (c) 1999-2011 by The LAME Project
+    Copyright (c) 1999-2000 by Mark Taylor
+    See third_party/lame/COPYING and third_party/lame/LICENSE.
+
+  minimp3 (host tests only)
+    CC0-1.0
+    https://github.com/lieff/minimp3
+    See third_party/minimp3/LICENSE.
+
+  sgnano SGX SDK (sdk/sgx)
+    MIT
+    Copyright (c) 2026 antarcticlion
+    See sdk/sgx/LICENSE.
+
+The wav2mp3.sgx binary statically links LAME. The corresponding source
+and the build instructions are in this repository:
+
+  third_party/lame/
+  apps/wav2mp3/
+  sdk/sgx/
+  CMakeLists.txt
+  cmake/
+  README.md
+
+There is NO WARRANTY, to the extent permitted by law.
