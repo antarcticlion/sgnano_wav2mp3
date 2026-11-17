@@ -149,7 +149,3 @@ Release の成果物は、sgnano 本体のリリースに同梱したり、ほ�
 - `docs/`: **CC BY-SA 4.0**（`docs/LICENSE`）
 
 全文は `LICENSE` と `LICENSES/` にあります。
-
-## 作った人
-
-南極獅子（antarcticlion）— sgnano プロジェクト チーフデザイナー
