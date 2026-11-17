@@ -492,7 +492,12 @@ void *_calloc_r(struct _reent *r, size_t a, size_t b) { (void)r; return calloc(a
 #define EH_DEP       120u
 #define EH_SLOT      256u
 #define EH_SLOTS     16u
-typedef struct { uint32_t used; uint32_t pad; uint8_t slot[EH_SLOTS][EH_SLOT]; } eh_pool_t;
+typedef struct {
+    uint32_t used;
+    // cppcheck-suppress unusedStructMember   // slot を 8 バイトに整列するための詰めもの
+    uint32_t pad;
+    uint8_t slot[EH_SLOTS][EH_SLOT];
+} eh_pool_t;
 static eh_pool_t *volatile eh_pool;   // 2 つのタスクが同時に初めて投げると 1 つ余分に取るが、余りは終わりに返る（害は無い）
 
 static void *eh_take(size_t n) {
@@ -513,7 +518,7 @@ static void *eh_take(size_t n) {
 static void eh_give(void *q) {
     eh_pool_t *p = eh_pool;
     uint8_t *base = p ? p->slot[0] : NULL;
-    uint8_t *end = base ? base + EH_SLOTS * EH_SLOT : NULL;
+    const uint8_t *end = base ? base + EH_SLOTS * EH_SLOT : NULL;
     if (p && (uint8_t *)q >= base && (uint8_t *)q < end) {
         const unsigned k = (unsigned)(((uint8_t *)q - base) / EH_SLOT);
         __atomic_fetch_and(&p->used, ~(1u << k), __ATOMIC_RELEASE);
