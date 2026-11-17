@@ -512,8 +512,10 @@ static void *eh_take(size_t n) {
 }
 static void eh_give(void *q) {
     eh_pool_t *p = eh_pool;
-    if (p && (uint8_t *)q >= p->slot[0] && (uint8_t *)q < p->slot[EH_SLOTS]) {
-        const unsigned k = (unsigned)(((uint8_t *)q - p->slot[0]) / EH_SLOT);
+    uint8_t *base = p ? p->slot[0] : NULL;
+    uint8_t *end = base ? base + EH_SLOTS * EH_SLOT : NULL;
+    if (p && (uint8_t *)q >= base && (uint8_t *)q < end) {
+        const unsigned k = (unsigned)(((uint8_t *)q - base) / EH_SLOT);
         __atomic_fetch_and(&p->used, ~(1u << k), __ATOMIC_RELEASE);
         return;
     }
