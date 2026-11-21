@@ -19,7 +19,11 @@
 #include "sgx_overlay.h"                       // オーバーレイの型（ABI 4.1。SDK の部品 sgx_overlay.c と同じもの）
 
 #define SGX_ABI_MAJOR 5
-#define SGX_ABI_MINOR 11                         // 5.11（2026-11-16）: run_context（ファイラー / シェル / パイプ / 子）と progress_box（ファイラーの上の進み具合の窓）
+#define SGX_ABI_MINOR 15                         // 5.15（2026-11-20）: set_mode の印 SGX_MODE_LR_ONE_BG（ローレゾ面を BG 1 面で開く。表は 5.14 と同じ）
+                                                 // 5.14（2026-11-20）: set_mode の印 SGX_MODE_CLOSE_PLANES（使わない面を返す。表は 5.13 と同じ）
+                                                 // 5.13（2026-11-20）: pad_ex（記述子の生のボタンと layout）
+                                                 // 5.12（2026-11-17）: 圧縮と書庫 arc_*（gzip / bzip2 / xz / LZMA / ZIP / 7z / tar）
+                                                 // 5.11（2026-11-16）: run_context（ファイラー / シェル / パイプ / 子）と progress_box（ファイラーの上の進み具合の窓）
                                                  // 5.10（2026-11-15）: 表計算のマクロ macro_run（mruby / MicroPython / SG BASIC の Sheet からセルを読み書き）
                                                  // 5.9                          // 5.9（2026-11-15）: IME（ime_key / ime_on / ime_composing / ime_draw / ime_state / ime_cancel）、キー SGX_KEY_IME・MENU・GUI_L / R
                                                  // 5.8（2026-11-15）: set_mode の印 SGX_MODE_NO_LR（表は 5.7 と同じ）
@@ -103,6 +107,7 @@ typedef struct {
 
 struct sgx_macro_sheet;                           // 5.10 の表計算のマクロ（下で定義）
 struct sgx_progress;                              // 5.11 の progress_box（定義は表の後ろ）
+struct sgx_arc_entry; struct sgx_arc_cb;          // 5.12 の圧縮と書庫（定義は表の後ろ）
 typedef struct sgx_api sgx_api_t;
 typedef int (*sgx_entry_t)(const sgx_api_t *api, int argc, char **argv);
 
@@ -140,6 +145,10 @@ enum {
                                                  // 足さないとき、借りずに開く形は 32KB・16 本以上。テキスト面のあるモード 3〜6 で VGM を鳴らすなら足す）
 #define SGX_MODE_NO_LR 0x1000                    // set_mode に足す（5.8、2026-11-15）: モード 3〜5 でもローレゾ面を開かない（テキスト + FB だけ。
                                                  // ローレゾ面の 50〜60KB の SRAM をテキスト面などに回す。SGCALC）
+#define SGX_MODE_CLOSE_PLANES 0x2000             // set_mode に足す（5.14、2026-11-20）: 替えたあと、新しいモードで使わない面（ローレゾ面・モード 7 の
+                                                 // ビットマップ）を閉じて SRAM を返す（無ければプログラムの終わりまで開いたまま）。また開くと中身は消えている
+#define SGX_MODE_LR_ONE_BG 0x4000                // set_mode に足す（5.15、2026-11-20）: ローレゾ面を BG 1 面（BG0 だけ）で開く。マップの 8KB の SRAM が空く
+                                                 // （cpubench: ローレゾ面とテキスト面を出したまま倍精度の配列 82KB を SRAM に取るため）
 #define SGX_MODE_TEXT_SMALL 0x400                // set_mode に足す（4.12）: モード 7 のテキスト面を 25 行・グリフ 19 行にする。
                                                  // 約 24KB の SRAM が空き、64KB のビットマップを SRAM に置ける（mplay）。
                                                  // 4.12 より前のファームはこのビットを無視する（30 行のまま）
@@ -229,6 +238,10 @@ typedef struct { bool connected, ready, proximity, tip, button1, button2; uint8_
 #define SGX_PAD_AXES 6
 typedef struct { bool connected; uint16_t vid, pid; uint8_t hat, buttons_n, axes_mask; uint32_t buttons; int16_t axis[SGX_PAD_AXES]; } sgx_pad_t;
 // hat: 0 = 上・時計回り・8 以上 = 中立。buttons: F310 の D モードの並び（bit0 X・1 A・2 B・3 Y・4 LB・5 RB・6 LT・7 RT・8 BACK・9 START）。axis は -127〜127
+// 5.13: pad_ex の形。buttons は DS3 / Switch Pro も F310 の並びに正規化。buttons_raw は記述子の生のビット（DS3 は生の 16 ビット）。
+// layout: 0 = 汎用 HID（記述子の順）、1 = F310、2 = DS3、3 = Switch Pro
+typedef struct { sgx_pad_t base; uint32_t buttons_raw; uint8_t layout; } sgx_pad_ex_t;
+enum { SGX_PAD_LAYOUT_GENERIC = 0, SGX_PAD_LAYOUT_F310, SGX_PAD_LAYOUT_DS3, SGX_PAD_LAYOUT_SWITCH };
 
 // ---- 音 ----
 enum { SGX_WAVE_SINE = 0, SGX_WAVE_TRIANGLE, SGX_WAVE_SAW, SGX_WAVE_SQUARE, SGX_WAVE_PULSE25, SGX_WAVE_ORGAN, SGX_WAVE_NOISE };   // src/audio/audio.h と同じ
@@ -242,6 +255,8 @@ enum {                                            // 誤り（src/ruby/rbfs.h �
     SGX_ENOTSUP, SGX_EINVAL, SGX_ENOMEM, SGX_ENODEV,
     SGX_EBUSY,                                    // 4.0: 使っている（取り出し中のブロックがある・キャッシュがすべて取り出し中）
     SGX_EMACRO,                                   // 5.10: マクロの構文・実行の誤り（文は macro_run の err）
+    SGX_EDATA,                                    // 5.12: 圧縮されたものが壊れている（CRC の不一致など）
+    SGX_ECANCELED,                                // 5.12: 止めた（stop_requested・tick が false）
 };
 #define SGX_ATTR_RO   0x01u
 #define SGX_ATTR_HID  0x02u
@@ -537,7 +552,7 @@ struct sgx_api {
 
     // ==== タスクとプログラム（協調）====
     // タスク: 同じプログラムの中で並んで走る。優先度は 0（ふつう、入口と同じ）〜 20（低い）。スタックは PSRAM（sram なら SRAM、取れなければ PSRAM）
-    sgx_task_t *(*task_create)(void (*fn)(void *arg), void *arg, uint32_t stack_bytes, unsigned prio, bool sram_stack, const char *name);
+    sgx_task_t *(*task_create)(void (*fn)(void *arg), void *arg, uint32_t stack_bytes, unsigned prio, bool sram_stack, const char *name);   // stack_bytes は 1KB 以上（小さければ 1KB。2026-11-20 から。以前は 2KB）
     bool     (*task_alive)(sgx_task_t *t);
     int      (*task_join)(sgx_task_t *t, uint32_t timeout_us);   // 終わるまで待つ（0 = 終わった、-1 = 時間切れ）
     void     (*task_exit)(void);                  // このタスクを終える（入口のタスクなら、プログラムが終わる）
@@ -955,7 +970,50 @@ struct sgx_api {
     // 進み具合の窓をテキスト面の真ん中に描く（ファイラーの WAV 書き出しと同じ形・表示の言語）。NULL なら窓の所を空白にする。
     // POPUP のとき以外でも描ける（端末の写しの上に描く）。毎回全体を描くので、0.2〜1 秒に 1 度でよい
     void     (*progress_box)(const struct sgx_progress *p);
+    // ---- 5.12（2026-11-17）: 圧縮と書庫（docs/sgx_abi.md §5.30）----
+    // 作業場は PSRAM（ファームが取る。プログラムのヒープは使わない）。どれも終わるまで戻らない。stop_requested で止まる（-SGX_ECANCELED）。
+    // 返り値は 0 か -SGX_E*（壊れている = -SGX_EDATA、作業場が足りない = -SGX_ENOMEM、扱わない形・方式 = -SGX_ENOTSUP）。
+    // fmt は SGX_ARC_*、level は 0〜9（9 がよく縮む。作業場に入らなければファームが下げる）。
+    // arc_mem: メモリどうし（op = SGX_ARC_COMPRESS / SGX_ARC_DECOMPRESS）。dst に入らなければ -SGX_EINVAL
+    int      (*arc_mem)(unsigned op, unsigned fmt, int level, const void *src, uint32_t n, void *dst, uint32_t cap, uint32_t *out_n);
+    // arc_file: 1 つのファイルを圧縮・伸張する（.gz .bz2 .xz .lzma）。伸張で fmt = SGX_ARC_AUTO なら頭と名前から決める
+    int      (*arc_file)(unsigned op, unsigned fmt, int level, const char *in, const char *out, const struct sgx_arc_cb *cb);
+    // arc_list: 書庫（ZIP・7z・tar・.tar.gz など、と 1 つだけの圧縮）の項目を max 個まで ents に。全部の数を *total に
+    int      (*arc_list)(const char *archive, struct sgx_arc_entry *ents, unsigned max, unsigned *total);
+    // arc_extract: dest のフォルダへ展開する（フォルダは作る、同じ名前は置き換える）。only = NULL で全部、名前ならその項目（フォルダなら下も）。
+    // flags: SGX_ARC_X_FLAT = フォルダを作らず名前だけで置く。*files に書いたファイルの数（NULL 可）
+    int      (*arc_extract)(const char *archive, const char *dest, const char *only, unsigned flags, const struct sgx_arc_cb *cb, unsigned *files);
+    // arc_create: 書庫を作る。kind = SGX_ARC_ZIP / SGX_ARC_7Z / SGX_ARC_TAR。method: ZIP は STORE / DEFLATE / BZIP2 / LZMA、
+    // tar は重ねる圧縮（STORE = .tar、GZIP、BZIP2、XZ、LZMA）、7z は見ない（LZMA）。kind = SGX_ARC_AUTO なら書庫の名前から決める。
+    // paths はファイルかフォルダ（フォルダは中身ごと）。書庫の中の名前は、それぞれの最後の名前から下。*items に入れた項目の数（NULL 可）
+    int      (*arc_create)(const char *archive, unsigned kind, unsigned method, int level, const char *const *paths, unsigned n,
+                           const struct sgx_arc_cb *cb, unsigned *items);
+    const char *(*arc_why)(void);                 // 直前の誤りの理由（英語。NULL = 無い）
+    // ---- 5.13（2026-11-20）: パッドの記述子の生情報（docs/sgx_abi.md §5.31）----
+    // pad と同じ内容に、buttons_raw（記述子の生のボタン）と layout（SGX_PAD_LAYOUT_*）を足したもの。
+    // 汎用 HID は buttons = buttons_raw（記述子の宣言順）。DS3 / Switch Pro は buttons だけ F310 の並びに正規化する。
+    bool     (*pad_ex)(int i, sgx_pad_ex_t *o);
+    // 5.13: パッドの振動（いまは DS3 だけ）。weak 0/1、strong 0..255。対応していなければ false
+    bool     (*pad_rumble)(int i, uint8_t weak, uint8_t strong);
 };
+
+// ---- 圧縮と書庫（5.12）----
+enum { SGX_ARC_STORE = 0, SGX_ARC_DEFLATE, SGX_ARC_ZLIB, SGX_ARC_GZIP, SGX_ARC_BZIP2, SGX_ARC_LZMA, SGX_ARC_XZ,
+       SGX_ARC_ZIP = 100, SGX_ARC_7Z, SGX_ARC_TAR, SGX_ARC_AUTO = 0xFFu };
+enum { SGX_ARC_COMPRESS = 0, SGX_ARC_DECOMPRESS = 1 };
+#define SGX_ARC_X_FLAT 1u
+typedef struct sgx_arc_entry {
+    char     name[260];                           // UTF-8、区切りは '/'（入らなければ切る。truncated = 1）
+    uint64_t size, csize;                         // 伸張後・書庫の中（分からなければ 0）
+    uint32_t mtime, crc;                          // UTC の秒・CRC32（0 = 無い）
+    uint16_t method;                              // ZIP の方式の番号など
+    uint8_t  attr;                                // SGX_ATTR_*
+    uint8_t  is_dir, truncated;
+} sgx_arc_entry_t;
+typedef struct sgx_arc_cb {                        // 進み具合（呼び手のタスクから呼ぶ）。false を返すと止める（-SGX_ECANCELED）
+    bool (*tick)(void *user, uint64_t in_bytes, uint64_t out_bytes, const char *name);
+    void *user;
+} sgx_arc_cb_t;
 
 // ---- run_context（5.11）の値 ----
 enum { SGX_RUN_FILER = 0, SGX_RUN_SHELL = 1, SGX_RUN_PIPE = 2, SGX_RUN_CHILD = 3, SGX_RUN_POPUP = 4 };

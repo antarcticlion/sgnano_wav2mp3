@@ -57,17 +57,18 @@ static inline void sgxp__box(sgxp_t *p, uint32_t flags, const char *err) {
     sgx->progress_box(&b);
 }
 static inline void sgxp__print(sgxp_t *p) {
-    char l[160], t[16], r[16], a[24], o[24];
+    char l[160], t[16];
     sgxp__time(t, sizeof t, sgxp_elapsed(p));
     int n = p->pct >= 0 ? snprintf(l, sizeof l, "  %3d%%  %s", p->pct, t) : snprintf(l, sizeof l, "  %s", t);
     const int32_t left = sgxp__left(p);
-    if (left >= 0 && n < (int)sizeof l) { sgxp__time(r, sizeof r, (uint32_t)left); n += snprintf(l + n, sizeof l - (size_t)n, "  left ~%s", r); }
+    if (left >= 0 && n < (int)sizeof l) { char r[16]; sgxp__time(r, sizeof r, (uint32_t)left); n += snprintf(l + n, sizeof l - (size_t)n, "  left ~%s", r); }
     if (p->out && n < (int)sizeof l) {
+        char a[24];
         sgxp__size(a, sizeof a, p->out);
-        if (p->out_total) { sgxp__size(o, sizeof o, p->out_total); n += snprintf(l + n, sizeof l - (size_t)n, "  out %s / %s", a, o); }
+        if (p->out_total) { char o[24]; sgxp__size(o, sizeof o, p->out_total); n += snprintf(l + n, sizeof l - (size_t)n, "  out %s / %s", a, o); }
         else n += snprintf(l + n, sizeof l - (size_t)n, "  out %s", a);
     }
-    if (p->stage[0] && n < (int)sizeof l) n += snprintf(l + n, sizeof l - (size_t)n, "  (%s)", p->stage);
+    if (p->stage[0] && n < (int)sizeof l) snprintf(l + n, sizeof l - (size_t)n, "  (%s)", p->stage);
     const bool tty = p->ctx == SGX_RUN_SHELL || p->ctx == SGX_RUN_FILER;
     if (tty) { sgxp__say("\r"); sgxp__say(l); sgxp__say("\033[K"); p->line = true; }
     else { sgxp__say(l); sgxp__say("\n"); }

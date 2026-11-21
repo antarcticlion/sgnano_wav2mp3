@@ -4,7 +4,7 @@
 set(SGX_SDK_DIR ${CMAKE_CURRENT_LIST_DIR})
 
 function(sgx_add_program target)
-    # LIBS: プログラムが使う静的ライブラリ（2026-11-17、sgnano_wav2mp3。LAME を m / c / gcc より先に置くため）
+    # LIBS: プログラムが使う静的ライブラリ（2026-11-17、sgnano_wav2mp3 の SDK と同じ。LAME を m / c / gcc より先に置くため）
     cmake_parse_arguments(P "" "NAME;FLAGS;STACK" "SOURCES;DEFINES;INCLUDES;OPTIONS;LIBS" ${ARGN})
     if(NOT P_FLAGS)
         set(P_FLAGS 0)
