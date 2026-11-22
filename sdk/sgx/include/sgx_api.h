@@ -19,7 +19,8 @@
 #include "sgx_overlay.h"                       // オーバーレイの型（ABI 4.1。SDK の部品 sgx_overlay.c と同じもの）
 
 #define SGX_ABI_MAJOR 5
-#define SGX_ABI_MINOR 15                         // 5.15（2026-11-20）: set_mode の印 SGX_MODE_LR_ONE_BG（ローレゾ面を BG 1 面で開く。表は 5.14 と同じ）
+#define SGX_ABI_MINOR 16                         // 5.16（2026-11-22）: progress_box の印 SGX_PB_PREPARING（バーの上に「準備中...」をブリンクで。表は 5.15 と同じ）
+                                                 // 5.15（2026-11-20）: set_mode の印 SGX_MODE_LR_ONE_BG（ローレゾ面を BG 1 面で開く。表は 5.14 と同じ）
                                                  // 5.14（2026-11-20）: set_mode の印 SGX_MODE_CLOSE_PLANES（使わない面を返す。表は 5.13 と同じ）
                                                  // 5.13（2026-11-20）: pad_ex（記述子の生のボタンと layout）
                                                  // 5.12（2026-11-17）: 圧縮と書庫 arc_*（gzip / bzip2 / xz / LZMA / ZIP / 7z / tar）
@@ -1022,6 +1023,7 @@ enum { SGX_RUN_FILER = 0, SGX_RUN_SHELL = 1, SGX_RUN_PIPE = 2, SGX_RUN_CHILD = 3
 #define SGX_PB_FAILED   0x02u                    // 誤りで終わった（error に理由）
 #define SGX_PB_CANCELED 0x04u                    // 止めた
 #define SGX_PB_STOPPING 0x08u                    // 止めている途中
+#define SGX_PB_PREPARING 0x10u                   // 5.16: 始める前の準備中（バーの上に「準　備　中　．．．」をブリンクで。長く待つ前に描いておく）
 typedef struct sgx_progress {
     const char *title;                            // 1 行目（プログラムの名前と何をしているか。例 "wav2mp3: SC0111.vgz"）
     const char *file;                             // 2 行目（出力のファイル。NULL 可）
