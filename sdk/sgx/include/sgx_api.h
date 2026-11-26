@@ -19,7 +19,10 @@
 #include "sgx_overlay.h"                       // オーバーレイの型（ABI 4.1。SDK の部品 sgx_overlay.c と同じもの）
 
 #define SGX_ABI_MAJOR 5
-#define SGX_ABI_MINOR 16                         // 5.16（2026-11-22）: progress_box の印 SGX_PB_PREPARING（バーの上に「準備中...」をブリンクで。表は 5.15 と同じ）
+#define SGX_ABI_MINOR 19                         // 5.19（2026-11-24）: task_create_core0 / core_id（Core 0 サブタスク起動・コア識別、sgx_task_info_t.core）
+                                                 // 5.18（2026-11-24）: fb_release / fb_acquire（モード 2 FB の動的解放・再確保）
+                                                 // 5.17（2026-11-24）: core_stat（Core 0/1 の余裕度・稼働率・描画統計）
+                                                 // 5.16（2026-11-22）: progress_box の印 SGX_PB_PREPARING（バーの上に「準備中...」をブリンクで。表は 5.15 と同じ）
                                                  // 5.15（2026-11-20）: set_mode の印 SGX_MODE_LR_ONE_BG（ローレゾ面を BG 1 面で開く。表は 5.14 と同じ）
                                                  // 5.14（2026-11-20）: set_mode の印 SGX_MODE_CLOSE_PLANES（使わない面を返す。表は 5.13 と同じ）
                                                  // 5.13（2026-11-20）: pad_ex（記述子の生のボタンと layout）
@@ -150,6 +153,10 @@ enum {
                                                  // ビットマップ）を閉じて SRAM を返す（無ければプログラムの終わりまで開いたまま）。また開くと中身は消えている
 #define SGX_MODE_LR_ONE_BG 0x4000                // set_mode に足す（5.15、2026-11-20）: ローレゾ面を BG 1 面（BG0 だけ）で開く。マップの 8KB の SRAM が空く
                                                  // （cpubench: ローレゾ面とテキスト面を出したまま倍精度の配列 82KB を SRAM に取るため）
+#define SGX_MODE_FREQ_31K 0x00000u               // set_mode に足す（5.17、2026-11-24）: 31kHz（既定）
+#define SGX_MODE_FREQ_24K 0x10000u               // set_mode に足す（5.17、2026-11-24）: 24kHz（PC-98 基準、640x400 / 320x200 x2）
+#define SGX_MODE_FREQ_15K 0x20000u               // set_mode に足す（5.17、2026-11-24）: 15kHz（RGB モニタ向け、水平 15.75kHz）
+#define SGX_MODE_FREQ_MASK 0x30000u
 #define SGX_MODE_TEXT_SMALL 0x400                // set_mode に足す（4.12）: モード 7 のテキスト面を 25 行・グリフ 19 行にする。
                                                  // 約 24KB の SRAM が空き、64KB のビットマップを SRAM に置ける（mplay）。
                                                  // 4.12 より前のファームはこのビットを無視する（30 行のまま）
@@ -199,6 +206,15 @@ typedef struct {
     uint32_t frames, underrun, fifo_stall, recover, late_start, late_render;
     uint32_t pair_us[2];
 } sgx_video_info_t;
+typedef struct {
+    uint32_t idle_pct_x10;                        // 直近 1 秒の Core 0 余裕度（% x 10、例 703 = 70.3%）
+    uint32_t busy_pct_x10;                        // 直近 1 秒の Core 0 稼働率（% x 10、例 275 = 27.5%）
+    uint32_t idle_us;                             // 直近 1 秒の Core 0 アイドル待機時間（µs）
+    uint32_t busy_us;                             // 直近 1 秒の Core 0 描画処理時間（µs）
+    uint32_t pair_max_us[2];                      // Core 0 / Core 1 の最長ペア描画時間（µs）
+    uint32_t pairs[2];                            // Core 0 / Core 1 の直近 1 秒の描画ペア数
+    uint32_t min_ready;                           // 直近 1 秒の最小先読み完了ライン数
+} sgx_core_stat_t;
 typedef struct {
     uint32_t uptime_s, mem_free, mem_largest;    // 起動からの秒・SRAM のアリーナの空きの合計と最大の塊
     uint32_t usb_devices, hubs, pads, usb_reinit, usb_wedged;
@@ -332,7 +348,8 @@ typedef struct {
     uint8_t  current;                     // 1 = いま走っている
     uint8_t  suspended;                   // 1 = 止められている
     uint8_t  qmi;                         // QMI（フラッシュ・PSRAM）の印
-    uint16_t reserved;
+    uint8_t  core;                        // 5.19: 実行コア番号（0 = Core 0 サブタスク、1 = Core 1 RTOS タスク）
+    uint8_t  reserved;
     uint32_t stack_size, stack_unused;    // スタックの大きさ・使っていない量
     uint32_t run_us, switches;            // 走った時間の合計（µs）・走り出した回数
 } sgx_task_info_t;
@@ -996,6 +1013,25 @@ struct sgx_api {
     bool     (*pad_ex)(int i, sgx_pad_ex_t *o);
     // 5.13: パッドの振動（いまは DS3 だけ）。weak 0/1、strong 0..255。対応していなければ false
     bool     (*pad_rumble)(int i, uint8_t weak, uint8_t strong);
+    // ---- 5.17（2026-11-24）: コア稼働率・描画統計（docs/sgx_abi.md §5.32）----
+    // Core 0 の描画アイドル余裕度（WFE スリープ時間）、稼働率、ペア描画時間、先読みライン余裕度などを返す
+    void     (*core_stat)(sgx_core_stat_t *out);
+    // ---- 5.18（2026-11-24）: モード2 フレームバッファの動的解放・再確保 ----
+    // fb_release: FB を使わない画面モード（0/1/5/6/7）のとき、確保されている FB（最大 2.4MB）を
+    // PSRAM アリーナへ解放する。成功（既に解放済み含む）なら 0、使用中・借用中なら -SGX_EBUSY。
+    // fb_acquire: 解放された FB を再確保する（pages = 0 で既定の最大 4 ページ）。成功なら確保ページ数、失敗なら -SGX_ENOMEM。
+    int      (*fb_release)(void);
+    int      (*fb_acquire)(unsigned pages);
+    // ---- 5.19（2026-11-24）: Core 0 サブタスク起動・コア識別 ----
+    // task_create_core0: Core 1 から起動したプログラムの子タスクを Core 0 の描画空き時間で走らせる。
+    //   描画・音声が常に最優先で、描画要求が来ると自動的に退避して描画後に再開する。
+    //   task_alive / task_join / task_exit / task_self / stop_requested / yield / sleep_us / us / ms /
+    //   sem_give / program_id / vsnprintf / double 演算（DCP）が使用可能。
+    //   ファイル・端末・画面モード・動的メモリ確保・mutex/queue/sem_take は Core 1 側で行うこと。
+    // core_id: いま実行中のコア番号（0 = Core 0、1 = Core 1）を返す。
+    sgx_task_t *(*task_create_core0)(void (*fn)(void *arg), void *arg, uint32_t stack_bytes, bool sram_stack, const char *name);
+    unsigned (*core_id)(void);
+    void     (*core_stat_sub)(uint32_t *sub_pct_x10, uint32_t *sub_us);   // Core 0 サブタスク稼働率（% x 10）・実行時間（µs）
 };
 
 // ---- 圧縮と書庫（5.12）----

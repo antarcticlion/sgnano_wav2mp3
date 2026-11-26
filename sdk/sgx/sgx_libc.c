@@ -56,13 +56,32 @@ uint32_t sgx_heap_bytes;
 // 【2026-11-06】malloc / free / realloc は SGX のミューテックスで守る。POV-Ray のように同じ優先度のタスクが時間で切り替わると、
 // 守らなければヒープの鎖が壊れる。ミューテックスは最初の malloc で作る（その時点でタスクが 1 つだけなら取り合わない）。
 // 作れなければ守らずに続ける（タスクを作らないプログラムなら困らない）
+// 【2026-11-24】Core 0 サブタスク（ABI 5.19）と Core 1 RTOS タスクの両方から malloc / free できるよう、
+// SRAM 上のスピンロック（sgx_sram_locks[0]）で排他する。64 回スピンしたら 50µs 譲り、Core 1 内の優先度逆転を防ぐ。
+// [0] heap, [1] compat boost::thread glock, [2] __cxa_get_globals
+volatile uint8_t *sgx_sram_locks;
 static sgx_mutex_t *heap_mx;
 static bool heap_mx_tried;
+static inline bool sgx_on_core0(void) {
+    return sgx && sgx->size >= offsetof(sgx_api_t, core_id) + sizeof sgx->core_id && sgx->core_id && sgx->core_id() == 0u;
+}
 static void heap_lock(void) {
+    volatile uint8_t *lk = sgx_sram_locks;
+    if (lk) {
+        unsigned spins = 0;
+        while (__atomic_exchange_n(&lk[0], 1u, __ATOMIC_ACQUIRE) != 0u) {
+            if (++spins >= 64u) { spins = 0; sgx->sleep_us(50u); }
+        }
+        return;
+    }
     if (!heap_mx && !heap_mx_tried) { heap_mx_tried = true; heap_mx = sgx->mutex_new(); }
     if (heap_mx) (void)sgx->mutex_lock(heap_mx, SGX_WAIT_FOREVER);
 }
-static void heap_unlock(void) { if (heap_mx) sgx->mutex_unlock(heap_mx); }
+static void heap_unlock(void) {
+    volatile uint8_t *lk = sgx_sram_locks;
+    if (lk) { __atomic_store_n(&lk[0], 0u, __ATOMIC_RELEASE); return; }
+    if (heap_mx) sgx->mutex_unlock(heap_mx);
+}
 
 // 空きの数え直し（全部の塊をたどる）。ふだんは malloc / free が heap_free_bytes を差分で直す（2026-11-06: 毎回たどっていて、
 // 余りのページ 1.8MB を足した POV-Ray では malloc が core1 の時間の 2 割を使っていた）。塊を返したときだけ呼ぶ
@@ -83,6 +102,7 @@ static void heap_stats(void) {
     sgx_heap_bytes = heap_total;
 }
 static bool heap_add(uint32_t bytes) {
+    if (sgx_on_core0()) return false;
     bytes = (bytes + SGNANO_HEAP_CHUNK - 1u) & ~(SGNANO_HEAP_CHUNK - 1u);
     if (bytes < SGNANO_HEAP_CHUNK) bytes = SGNANO_HEAP_CHUNK;
     if (bytes > SGNANO_HEAP_MAX || heap_total > SGNANO_HEAP_MAX - bytes) return false;
@@ -116,6 +136,7 @@ static uint32_t heap_reserve_unlocked(uint32_t bytes) {
     return heap_total < heap_min_bytes ? heap_total : heap_min_bytes;
 }
 static void heap_shrink(void) {
+    if (sgx_on_core0()) return;
     while (heap_total > heap_min_bytes && heap_total - heap_in_use >= SGNANO_HEAP_HIGH) {
         int pick = -1;
         for (unsigned c = 0; c < SGX_HEAP_MAX_CHUNKS; c++) {
@@ -136,6 +157,7 @@ static void heap_shrink(void) {
 // 入る空きが本当に無いときは今までどおり毎回伸ばしてみる（足りないのに NULL を返さない）
 static uint32_t heap_grow_fail_ms;
 static bool heap_grow_ahead(void) {
+    if (sgx_on_core0()) return false;
     if (heap_grow_fail_ms && sgx->ms() - heap_grow_fail_ms < 500u) return false;
     if (heap_add(SGNANO_HEAP_CHUNK)) { heap_grow_fail_ms = 0; return true; }
     heap_grow_fail_ms = sgx->ms() | 1u;
@@ -472,6 +494,10 @@ void sgx_libc_init(const sgx_api_t *api) {
         const void *const *t = api->double_funcs(&n);
         if (t && n >= SGX_DF_COUNT) __sgx_dtab = t;
     }
+    if (!sgx_sram_locks && api->sram_alloc) {
+        uint8_t *lk = (uint8_t *)api->sram_alloc(32u, 32u);
+        if (lk) { memset(lk, 0, 32u); sgx_sram_locks = lk; }
+    }
 }
 
 // newlib の再入用の確保の口（2026-10-31）: strdup・asprintf などは中で _malloc_r を呼ぶ。用意していないと NULL が返った（sgbasic の LOAD が失敗）
@@ -499,6 +525,12 @@ typedef struct {
     uint8_t slot[EH_SLOTS][EH_SLOT];
 } eh_pool_t;
 static eh_pool_t *volatile eh_pool;   // 2 つのタスクが同時に初めて投げると 1 つ余分に取るが、余りは終わりに返る（害は無い）
+void sgx_eh_pool_preinit(void) {
+    if (!eh_pool && sgx && sgx->sram_alloc) {
+        eh_pool_t *p = (eh_pool_t *)sgx->sram_alloc(sizeof *p, 8u);
+        if (p) { p->used = 0u; eh_pool = p; }
+    }
+}
 
 static void *eh_take(size_t n) {
     if (n <= EH_SLOT) {
